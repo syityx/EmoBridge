@@ -1,2 +1,5 @@
-backend/.env
 .vscode/
+app/__pycache__/
+app/sessions/
+**/__pycache__/
+app/.env
