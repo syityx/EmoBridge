@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Iterator
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -17,7 +18,7 @@ def build_llm(settings: Settings, temperature: float, stream: bool = False) -> C
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         temperature=temperature,
-        stream=stream,
+        streaming=stream,
     )
 
 
@@ -31,6 +32,11 @@ def _to_langchain_messages(history: list[SessionMessage]) -> list[HumanMessage |
     return result
 
 
+
+def sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 def stream_chat_chunks(
     settings: Settings,
     store: SessionStore,
@@ -42,7 +48,8 @@ def stream_chat_chunks(
     store.append_message(session_id, "user", payload.input_text)
 
     # 构造带历史消息占位符的提示模板，后续按流式方式调用模型。
-    llm = build_llm(settings, payload.temperature, stream=True)
+    # llm = build_llm(settings, payload.temperature, stream=True)
+    llm = build_llm(settings, payload.temperature, stream=False)
     system_prompt = payload.system_prompt or settings.default_system_prompt
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -57,22 +64,39 @@ def stream_chat_chunks(
     assistant_parts: list[str] = []
     saved = False
 
+    # 先发 start 事件，便于前端初始化流状态。
+    yield sse_event("start", {"session_id": session_id, "model": settings.model_name})
+
     try:
         # 按模型输出分片逐段向上游 yield，实现真正流式返回。
-        for chunk in chain.stream({"history": _to_langchain_messages(history), "input_text": payload.input_text}):
+        for chunk in chain.stream(
+            {"history": _to_langchain_messages(history), "input_text": payload.input_text},
+            stream_mode="updates"
+        ):
             token = getattr(chunk, "content", "")
             if not token:
                 continue
+
+            if isinstance(token, list):
+                token = "".join(
+                    item.get("text", "") if isinstance(item, dict) else str(item)
+                    for item in token
+                )
+
+            token = str(token)
+            if not token:
+                continue
             assistant_parts.append(token)
-            yield token
+            yield sse_event("token", {"token": token})
 
         # 正常完成后，将完整助手回复写入会话存储。
         assistant_text = "".join(assistant_parts).strip()
         store.append_message(session_id, "assistant", assistant_text)
+        yield sse_event("done", {"reply": assistant_text})
         saved = True
     except Exception as exc:
         # 异常时向前端返回可见错误文本，避免静默失败。
-        yield f"\n[系统错误] 调用模型失败：{exc}"
+        yield sse_event("error", {"error": f"调用模型失败：{exc}"})
     finally:
         # 如果中途异常但已有部分输出，也尽量保存已生成内容，减少上下文丢失。
         if not saved:

@@ -45,15 +45,16 @@ def stream_session_message(session_id: str, payload: ChatMessageRequest) -> Stre
     def stream_with_log() -> Iterator[str]:
         for token in stream:
             # 控制台输出流式响应的 token，方便调试和观察
-            # print(f"[stream token][{session_id}] {token}", flush=True)
+            # print(f"[{session_id}] \n{token}", flush=True)
             # yield 用在函数里，作用是“产出一个值并暂停函数”，下次继续从暂停位置往下执行。
             yield token
 
     return StreamingResponse(
         stream_with_log(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )

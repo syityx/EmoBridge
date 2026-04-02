@@ -66,6 +66,32 @@ async function appendWithTypewriter(targetMessage, chunk, delayMs = 18) {
   }
 }
 
+function parseSseData(rawData) {
+  const trimmed = rawData.trim()
+  if (!trimmed) return ''
+  if (trimmed === '[DONE]') return '[DONE]'
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return trimmed
+  }
+}
+
+function getTokenText(parsed) {
+  if (!parsed || typeof parsed === 'string') return parsed || ''
+  return parsed.token || parsed.delta || parsed.content || parsed.text || ''
+}
+
+function getDoneReply(parsed) {
+  if (!parsed || typeof parsed === 'string') return parsed || ''
+  return parsed.reply || parsed.content || parsed.text || ''
+}
+
+function getErrorText(parsed) {
+  if (!parsed || typeof parsed === 'string') return ''
+  return parsed.error || ''
+}
+
 async function consumeStreamResponse(response, assistantMessage) {
   if (!response.body) {
     throw new Error('后端未返回可读取的流。')
@@ -73,20 +99,79 @@ async function consumeStreamResponse(response, assistantMessage) {
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8')
+  let buffer = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+  const processFrame = async (event) => {
+    const lines = event.split(/\r?\n/)
+    let eventName = 'message'
+    const dataLines = []
 
-    const chunk = decoder.decode(value, { stream: true })
-    if (chunk) {
-      await appendWithTypewriter(assistantMessage, chunk)
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim()
+        continue
+      }
+      if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trimStart())
+      }
+    }
+
+    if (!dataLines.length) return
+    const parsed = parseSseData(dataLines.join('\n'))
+
+    if (parsed === '[DONE]') {
+      throw new Error('__SSE_DONE__')
+    }
+
+    if (eventName === 'error') {
+      throw new Error(getErrorText(parsed) || '流式调用失败')
+    }
+
+    if (eventName === 'done') {
+      const replyText = getDoneReply(parsed)
+      if (replyText && !assistantMessage.text.trim()) {
+        await appendWithTypewriter(assistantMessage, replyText)
+      }
+      throw new Error('__SSE_DONE__')
+    }
+
+    const tokenText = getTokenText(parsed)
+    if (tokenText) {
+      await appendWithTypewriter(assistantMessage, tokenText)
     }
   }
 
-  const tail = decoder.decode()
-  if (tail) {
-    await appendWithTypewriter(assistantMessage, tail)
+  while (true) {
+    try {
+      const { done, value } = await reader.read()
+      if (done) {
+        buffer += decoder.decode()
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split(/\r?\n\r?\n/)
+      buffer = events.pop() || ''
+
+      for (const event of events) {
+        await processFrame(event)
+      }
+    } catch (error) {
+      if (error?.message === '__SSE_DONE__') {
+        return
+      }
+      throw error
+    }
+  }
+
+  if (buffer.trim()) {
+    try {
+      await processFrame(buffer)
+    } catch (error) {
+      if (error?.message !== '__SSE_DONE__') {
+        throw error
+      }
+    }
   }
 }
 
@@ -124,7 +209,7 @@ async function sendMessage() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'text/plain'
+        Accept: 'text/event-stream'
       },
       signal: controller.signal,
       body: JSON.stringify({
