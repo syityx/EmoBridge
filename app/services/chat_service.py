@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 from typing import Iterator
 
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import AIMessageChunk
 from langchain_openai import ChatOpenAI
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import InMemorySaver
 
 from core.config import Settings
-from schemas.chat import ChatMessageRequest, SessionMessage
+from schemas.chat import ChatMessageRequest
 from services.session_store import SessionStore
 
 
@@ -22,17 +23,38 @@ def build_llm(settings: Settings, temperature: float, stream: bool = False) -> C
     )
 
 
-def _to_langchain_messages(history: list[SessionMessage]) -> list[HumanMessage | AIMessage]:
-    result: list[HumanMessage | AIMessage] = []
-    for message in history:
-        if message.role == "user":
-            result.append(HumanMessage(content=message.content))
-        elif message.role == "assistant":
-            result.append(AIMessage(content=message.content))
-    return result
+def _normalize_chunk_content(content: object) -> str:
+    if not content:
+        return ""
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        return "".join(
+            item.get("text", "") if isinstance(item, dict) else str(item)
+            for item in content
+        )
+
+    return str(content)
 
 
+def build_chat_agent(
+    settings: Settings,
+    temperature: float,
+    system_prompt: str,
+):
+    llm = build_llm(settings, temperature, stream=True)
 
+    return create_agent(
+        model = llm,
+        tools = [],
+        system_prompt = system_prompt,
+        checkpointer = InMemorySaver(),
+    )
+
+
+# 实现标准SSE帧格式的事件生成器，便于前端解析和处理不同类型的事件。
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -43,22 +65,14 @@ def stream_chat_chunks(
     session_id: str,
     payload: ChatMessageRequest,
 ) -> Iterator[str]:
-    # 读取会话历史并先写入当前用户消息，确保多轮上下文连续。
-    history = store.read_messages(session_id)
+    # 会话文件仅用于兼容已有消息查询接口，agent 记忆由 checkpointer 托管。
     store.append_message(session_id, "user", payload.input_text)
 
-    # 构造带历史消息占位符的提示模板，后续按流式方式调用模型。
-    # llm = build_llm(settings, payload.temperature, stream=True)
-    llm = build_llm(settings, payload.temperature, stream=False)
+    # 使用 LangChain 内置短期记忆：通过 thread_id 自动维护会话上下文。
     system_prompt = payload.system_prompt or settings.default_system_prompt
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            MessagesPlaceholder("history"),
-            ("human", "{input_text}"),
-        ]
-    )
-    chain = prompt | llm
+    agent = build_chat_agent(settings, payload.temperature, system_prompt)
+
+    config = {"configurable": {"thread_id": session_id}}
 
     # assistant_parts 用于累积完整回复，便于最终落盘保存。
     assistant_parts: list[str] = []
@@ -68,22 +82,16 @@ def stream_chat_chunks(
     yield sse_event("start", {"session_id": session_id, "model": settings.model_name})
 
     try:
-        # 按模型输出分片逐段向上游 yield，实现真正流式返回。
-        for chunk in chain.stream(
-            {"history": _to_langchain_messages(history), "input_text": payload.input_text},
-            stream_mode="updates"
+        # 按 agent 输出分片逐段向上游 yield，实现真正流式返回。
+        for chunk, _metadata in agent.stream(
+            {"messages": [{"role": "user", "content": payload.input_text}]},
+            config=config,
+            stream_mode="messages",
         ):
-            token = getattr(chunk, "content", "")
-            if not token:
+            if not isinstance(chunk, AIMessageChunk):
                 continue
 
-            if isinstance(token, list):
-                token = "".join(
-                    item.get("text", "") if isinstance(item, dict) else str(item)
-                    for item in token
-                )
-
-            token = str(token)
+            token = _normalize_chunk_content(chunk.content)
             if not token:
                 continue
             assistant_parts.append(token)
@@ -91,7 +99,7 @@ def stream_chat_chunks(
 
         # 正常完成后，将完整助手回复写入会话存储。
         assistant_text = "".join(assistant_parts).strip()
-        store.append_message(session_id, "assistant", assistant_text)
+        # store.append_message(session_id, "assistant", assistant_text)
         yield sse_event("done", {"reply": assistant_text})
         saved = True
     except Exception as exc:
