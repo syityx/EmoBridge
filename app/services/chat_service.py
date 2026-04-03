@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 from typing import Iterator
 
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
 
 from core.config import Settings
-from schemas.chat import ChatMessageRequest
-from services.session_store import SessionStore
+from schemas.chat import ChatMessageRequest, SessionMessage
+
+
+CHECKPOINTER = InMemorySaver()
 
 
 def build_llm(settings: Settings, temperature: float, stream: bool = False) -> ChatOpenAI:
@@ -39,6 +41,33 @@ def _normalize_chunk_content(content: object) -> str:
     return str(content)
 
 
+def _message_role(message: BaseMessage) -> str:
+    message_type = getattr(message, "type", "")
+    if message_type == "human":
+        return "user"
+    if message_type == "ai":
+        return "assistant"
+    return message_type or "assistant"
+
+
+def get_thread_messages(session_id: str) -> list[SessionMessage]:
+    config = {"configurable": {"thread_id": session_id}}
+    checkpoint_tuple = CHECKPOINTER.get_tuple(config)
+    if checkpoint_tuple is None:
+        return []
+
+    raw_messages = checkpoint_tuple.checkpoint.get("channel_values", {}).get("messages", [])
+    result: list[SessionMessage] = []
+    for message in raw_messages:
+        if not isinstance(message, BaseMessage):
+            continue
+        content = _normalize_chunk_content(getattr(message, "content", "")).strip()
+        if not content:
+            continue
+        result.append(SessionMessage(role=_message_role(message), content=content))
+    return result
+
+
 def build_chat_agent(
     settings: Settings,
     temperature: float,
@@ -50,7 +79,7 @@ def build_chat_agent(
         model = llm,
         tools = [],
         system_prompt = system_prompt,
-        checkpointer = InMemorySaver(),
+        checkpointer = CHECKPOINTER,
     )
 
 
@@ -61,13 +90,9 @@ def sse_event(event: str, data: dict) -> str:
 
 def stream_chat_chunks(
     settings: Settings,
-    store: SessionStore,
     session_id: str,
     payload: ChatMessageRequest,
 ) -> Iterator[str]:
-    # 会话文件仅用于兼容已有消息查询接口，agent 记忆由 checkpointer 托管。
-    store.append_message(session_id, "user", payload.input_text)
-
     # 使用 LangChain 内置短期记忆：通过 thread_id 自动维护会话上下文。
     system_prompt = payload.system_prompt or settings.default_system_prompt
     agent = build_chat_agent(settings, payload.temperature, system_prompt)
@@ -76,7 +101,6 @@ def stream_chat_chunks(
 
     # assistant_parts 用于累积完整回复，便于最终落盘保存。
     assistant_parts: list[str] = []
-    saved = False
 
     # 先发 start 事件，便于前端初始化流状态。
     yield sse_event("start", {"session_id": session_id, "model": settings.model_name})
@@ -97,17 +121,9 @@ def stream_chat_chunks(
             assistant_parts.append(token)
             yield sse_event("token", {"token": token})
 
-        # 正常完成后，将完整助手回复写入会话存储。
+        # 正常完成后，返回完整助手回复。
         assistant_text = "".join(assistant_parts).strip()
-        # store.append_message(session_id, "assistant", assistant_text)
         yield sse_event("done", {"reply": assistant_text})
-        saved = True
     except Exception as exc:
         # 异常时向前端返回可见错误文本，避免静默失败。
         yield sse_event("error", {"error": f"调用模型失败：{exc}"})
-    finally:
-        # 如果中途异常但已有部分输出，也尽量保存已生成内容，减少上下文丢失。
-        if not saved:
-            assistant_text = "".join(assistant_parts).strip()
-            if assistant_text:
-                store.append_message(session_id, "assistant", assistant_text)

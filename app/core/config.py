@@ -28,7 +28,6 @@ class Settings:
     app_host: str
     app_port: int
     default_system_prompt: str
-    session_dir_name: str
 
 
 @lru_cache(maxsize=1)
@@ -40,5 +39,4 @@ def get_settings() -> Settings:
         app_host=os.getenv("APP_HOST", "0.0.0.0"),
         app_port=_int_env("PORT", 8080),
         default_system_prompt=os.getenv("DEFAULT_SYSTEM_PROMPT", "你是一个友好、专业的中文助手。"),
-        session_dir_name=os.getenv("SESSION_DIR", "sessions"),
     )
