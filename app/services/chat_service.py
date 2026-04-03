@@ -47,7 +47,7 @@ def _message_role(message: BaseMessage) -> str:
         return "user"
     if message_type == "ai":
         return "assistant"
-    return message_type or "assistant"
+    return ""
 
 
 def get_thread_messages(session_id: str) -> list[SessionMessage]:
@@ -61,10 +61,13 @@ def get_thread_messages(session_id: str) -> list[SessionMessage]:
     for message in raw_messages:
         if not isinstance(message, BaseMessage):
             continue
+        role = _message_role(message)
+        if not role:
+            continue
         content = _normalize_chunk_content(getattr(message, "content", "")).strip()
         if not content:
             continue
-        result.append(SessionMessage(role=_message_role(message), content=content))
+        result.append(SessionMessage(role=role, content=content))
     return result
 
 
@@ -90,6 +93,7 @@ def sse_event(event: str, data: dict) -> str:
 
 def stream_chat_chunks(
     settings: Settings,
+    thread_id: str,
     session_id: str,
     payload: ChatMessageRequest,
 ) -> Iterator[str]:
@@ -97,7 +101,7 @@ def stream_chat_chunks(
     system_prompt = payload.system_prompt or settings.default_system_prompt
     agent = build_chat_agent(settings, payload.temperature, system_prompt)
 
-    config = {"configurable": {"thread_id": session_id}}
+    config = {"configurable": {"thread_id": thread_id}}
 
     # assistant_parts 用于累积完整回复，便于最终落盘保存。
     assistant_parts: list[str] = []

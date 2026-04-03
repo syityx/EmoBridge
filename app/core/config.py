@@ -28,6 +28,8 @@ class Settings:
     app_host: str
     app_port: int
     default_system_prompt: str
+    auth_jwt_secret: str
+    auth_jwt_exp_minutes: int
 
 
 @lru_cache(maxsize=1)
@@ -39,4 +41,6 @@ def get_settings() -> Settings:
         app_host=os.getenv("APP_HOST", "0.0.0.0"),
         app_port=_int_env("PORT", 8080),
         default_system_prompt=os.getenv("DEFAULT_SYSTEM_PROMPT", "你是一个友好、专业的中文助手。"),
+        auth_jwt_secret=os.getenv("AUTH_JWT_SECRET", "demo-dev-secret-change-me"),
+        auth_jwt_exp_minutes=_int_env("AUTH_JWT_EXP_MINUTES", 720),
     )

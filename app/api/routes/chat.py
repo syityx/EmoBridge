@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from core.config import get_settings
+from schemas.auth import CurrentUser
 from schemas.chat import ChatMessageRequest, SessionMessagesResponse
 from services.chat_service import get_thread_messages, stream_chat_chunks
+from services.auth_service import build_thread_id, get_current_user
 from services.session_store import validate_session_id
 
 
@@ -21,24 +23,38 @@ def health_check() -> dict[str, str]:
 
 
 @router.get("/api/v1/sessions/{session_id}/messages", response_model=SessionMessagesResponse)
-def get_session_messages(session_id: str) -> SessionMessagesResponse:
+def get_session_messages(
+    session_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> SessionMessagesResponse:
     try:
         validate_session_id(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    messages = get_thread_messages(session_id)
+    thread_id = build_thread_id(current_user.user_id, session_id)
+    messages = get_thread_messages(thread_id)
     return SessionMessagesResponse(session_id=session_id, messages=messages)
 
 
 @router.post("/api/v1/sessions/{session_id}/messages")
-def stream_session_message(session_id: str, payload: ChatMessageRequest) -> StreamingResponse:
+def stream_session_message(
+    session_id: str,
+    payload: ChatMessageRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> StreamingResponse:
     try:
         validate_session_id(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    stream = stream_chat_chunks(settings=settings, session_id=session_id, payload=payload)
+    thread_id = build_thread_id(current_user.user_id, session_id)
+    stream = stream_chat_chunks(
+        settings=settings,
+        thread_id=thread_id,
+        session_id=session_id,
+        payload=payload,
+    )
 
     def stream_with_log() -> Iterator[str]:
         for token in stream:

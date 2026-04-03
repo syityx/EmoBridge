@@ -24,6 +24,56 @@ body {
   background: radial-gradient(circle at top left, #f8fbff 0%, #e7ecf5 50%, #dde4f0 100%);
 }
 
+.auth-shell {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: min(460px, 100%);
+  padding: 24px;
+  border: 1px solid #d7deea;
+  border-radius: 16px;
+  background: #ffffffd9;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 16px 30px rgb(31 57 120 / 12%);
+  display: grid;
+  gap: 12px;
+}
+
+.auth-card h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.auth-card p {
+  margin: 0;
+  color: #5c6d8d;
+  font-size: 14px;
+}
+
+.auth-card label {
+  display: grid;
+  gap: 6px;
+  color: #334a75;
+  font-size: 13px;
+}
+
+.auth-card input {
+  width: 100%;
+  border: 1px solid #cad5e8;
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #fff;
+  font: inherit;
+}
+
+.auth-loading {
+  text-align: center;
+}
+
 .chat-page {
   height: 100%;
   max-width: 960px;
@@ -194,6 +244,14 @@ button.ghost {
 }
 
 @media (max-width: 720px) {
+  .auth-shell {
+    padding: 16px;
+  }
+
+  .auth-card {
+    padding: 16px;
+  }
+
   .chat-page {
     border: none;
   }

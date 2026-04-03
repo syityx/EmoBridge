@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
 const SYSTEM_NAME = '智能助手'
+const TOKEN_STORAGE_KEY = 'demo_access_token'
+const USER_STORAGE_KEY = 'demo_user_id'
 
 function createSessionId() {
   return `session_${Date.now()}`
@@ -10,9 +12,18 @@ function createSessionId() {
 
 const storedSessionId = localStorage.getItem('chat_session_id')
 const sessionId = ref(storedSessionId || createSessionId())
+const authToken = ref(localStorage.getItem(TOKEN_STORAGE_KEY) || '')
+const currentUserId = ref(localStorage.getItem(USER_STORAGE_KEY) || '')
+const loginForm = reactive({
+  username: 'alice',
+  password: ''
+})
 const inputText = ref('')
 const isStreaming = ref(false)
+const isAuthLoading = ref(false)
+const isAuthBootstrapping = ref(true)
 const errorText = ref('')
+const loginError = ref('')
 const chatListRef = ref(null)
 const abortController = ref(null)
 
@@ -25,6 +36,122 @@ const messages = ref([
 ])
 
 const canSend = computed(() => !isStreaming.value && inputText.value.trim().length > 0)
+const isLoggedIn = computed(() => !!authToken.value && !!currentUserId.value)
+
+function saveAuth(token, userId) {
+  authToken.value = token
+  currentUserId.value = userId
+  localStorage.setItem(TOKEN_STORAGE_KEY, token)
+  localStorage.setItem(USER_STORAGE_KEY, userId)
+}
+
+function clearAuth() {
+  authToken.value = ''
+  currentUserId.value = ''
+  localStorage.removeItem(TOKEN_STORAGE_KEY)
+  localStorage.removeItem(USER_STORAGE_KEY)
+}
+
+async function verifyStoredToken() {
+  if (!authToken.value || !currentUserId.value) {
+    clearAuth()
+    isAuthBootstrapping.value = false
+    return
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/me`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${authToken.value}`
+      }
+    })
+
+    if (!response.ok) {
+      clearAuth()
+      return
+    }
+
+    const result = await response.json().catch(() => ({}))
+    if (!result?.user_id) {
+      clearAuth()
+      return
+    }
+
+    saveAuth(authToken.value, result.user_id)
+  } catch {
+    clearAuth()
+  } finally {
+    isAuthBootstrapping.value = false
+  }
+}
+
+function handleUnauthorized() {
+  clearAuth()
+  isStreaming.value = false
+  if (abortController.value) {
+    abortController.value.abort()
+  }
+  abortController.value = null
+  errorText.value = '登录已失效，请重新登录。'
+}
+
+function resetMessagesForUser(userId) {
+  messages.value = [
+    {
+      id: `welcome_${Date.now()}`,
+      role: 'assistant',
+      text: `你好，${userId}。请输入你的问题，我会以流式方式回复。`
+    }
+  ]
+}
+
+async function login() {
+  const username = loginForm.username.trim()
+  if (!username) {
+    loginError.value = '请输入用户名。'
+    return
+  }
+
+  loginError.value = ''
+  isAuthLoading.value = true
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        username,
+        password: loginForm.password
+      })
+    })
+
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(result?.detail || `登录失败（${response.status}）`)
+    }
+
+    saveAuth(result.access_token || '', result.user_id || '')
+    if (!isLoggedIn.value) {
+      throw new Error('登录响应缺少 access_token 或 user_id')
+    }
+    resetSession()
+    resetMessagesForUser(currentUserId.value)
+  } catch (error) {
+    loginError.value = error?.message || '登录失败'
+  } finally {
+    isAuthLoading.value = false
+  }
+}
+
+function logout() {
+  stopStreaming()
+  clearAuth()
+  loginForm.password = ''
+}
 
 function saveSessionId() {
   localStorage.setItem('chat_session_id', sessionId.value.trim())
@@ -179,6 +306,11 @@ async function sendMessage() {
   const text = inputText.value.trim()
   const sid = sessionId.value.trim()
 
+  if (!isLoggedIn.value) {
+    errorText.value = '请先登录。'
+    return
+  }
+
   if (!text || !sid || isStreaming.value) return
 
   errorText.value = ''
@@ -209,13 +341,19 @@ async function sendMessage() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Accept: 'text/event-stream'
+        Accept: 'text/event-stream',
+        Authorization: `Bearer ${authToken.value}`
       },
       signal: controller.signal,
       body: JSON.stringify({
         input_text: text
       })
     })
+
+    if (response.status === 401) {
+      handleUnauthorized()
+      throw new Error('登录已失效，请重新登录。')
+    }
 
     if (!response.ok) {
       throw new Error(`请求失败（${response.status}）`)
@@ -252,8 +390,12 @@ function onEnterSend(event) {
   sendMessage()
 }
 
-onMounted(() => {
+onMounted(async () => {
+  await verifyStoredToken()
   saveSessionId()
+  if (isLoggedIn.value) {
+    resetMessagesForUser(currentUserId.value)
+  }
   scrollToBottom()
 })
 
@@ -265,11 +407,37 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="chat-page">
+  <div v-if="isAuthBootstrapping" class="auth-shell">
+    <section class="auth-card auth-loading">
+      <h1>校验登录状态</h1>
+      <p>正在验证本地令牌，请稍候...</p>
+    </section>
+  </div>
+
+  <div v-else-if="!isLoggedIn" class="auth-shell">
+    <section class="auth-card">
+      <h1>Demo 登录</h1>
+      <p>输入用户名即可登录，后端会签发 JWT 用于会话隔离演示。</p>
+      <label>
+        用户名
+        <input v-model="loginForm.username" type="text" placeholder="例如 alice" />
+      </label>
+      <label>
+        密码（演示可空）
+        <input v-model="loginForm.password" type="password" placeholder="可不填" />
+      </label>
+      <p v-if="loginError" class="error">{{ loginError }}</p>
+      <button class="primary" :disabled="isAuthLoading" type="button" @click="login">
+        {{ isAuthLoading ? '登录中...' : '登录' }}
+      </button>
+    </section>
+  </div>
+
+  <div v-else class="chat-page">
     <header class="chat-header">
       <div class="title-area">
         <h1>{{ SYSTEM_NAME }}</h1>
-        <p>多轮会话 · SSE 流式返回</p>
+        <p>用户：{{ currentUserId }} · 多轮会话 · SSE 流式返回</p>
       </div>
       <div class="session-tools">
         <label>
@@ -277,6 +445,7 @@ onBeforeUnmount(() => {
           <input v-model="sessionId" type="text" @blur="saveSessionId" />
         </label>
         <button class="ghost" type="button" @click="resetSession">新会话</button>
+        <button class="ghost" type="button" @click="logout">退出</button>
       </div>
     </header>
 

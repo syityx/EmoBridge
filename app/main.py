@@ -3,6 +3,7 @@ from __future__ import annotations
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from api.routes.auth import router as auth_router
 from api.routes.chat import router as chat_router
 from core.config import get_settings
 
@@ -20,6 +21,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(auth_router)
     app.include_router(chat_router)
     return app
 
