@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, AsyncIterator
 
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -106,16 +107,76 @@ async def build_chat_agent(
     settings: Settings,
     temperature: float,
     system_prompt: str,
+    tools: list[Any] | None = None,
 ):
     llm = build_llm(settings, temperature, stream=True)
-    tools = await get_mcp_tools(settings)
+    agent_tools = tools if tools is not None else await get_mcp_tools(settings)
 
     return create_agent(
         model=llm,
-        tools=tools,
+        tools=agent_tools,
         system_prompt=system_prompt,
         checkpointer=CHECKPOINTER,
     )
+
+
+def _extract_json_block(text: str) -> str:
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    return match.group(0) if match else text
+
+
+async def _planner_decision(
+    settings: Settings,
+    payload: ChatMessageRequest,
+    system_prompt: str,
+    tools: list[Any],
+    has_tools: bool,
+) -> dict[str, Any]:
+    if not has_tools:
+        return {
+            "need_tool": False,
+            "tool_name": "",
+            "query": payload.input_text,
+            "reason": "No MCP tools available",
+        }
+
+    planner_llm = build_llm(settings, payload.temperature, stream=False)
+    planner_system = (
+        "You are the planner node of an agent workflow. "
+        "The tool set available to you includes: " + ", ".join(tool.name for tool in tools) + ". "
+        "Decide whether to call MCP tools before final answering. "
+        "Return JSON only with keys: need_tool (bool), tool_name (string), query (string), reason (string)."
+        "Output in Chinese."
+    )
+    planner_user = (
+        f"System prompt: {system_prompt}\n"
+        f"User question: {payload.input_text}\n"
+        "If tool use is needed, provide the best first tool and the rewritten query."
+    )
+
+    try:
+        decision_message = await planner_llm.ainvoke(
+            [
+                SystemMessage(content=planner_system),
+                HumanMessage(content=planner_user),
+            ]
+        )
+        raw = _normalize_chunk_content(getattr(decision_message, "content", "")).strip()
+        decision = json.loads(_extract_json_block(raw))
+        if not isinstance(decision, dict):
+            raise ValueError("Planner output is not a JSON object")
+        decision.setdefault("query", payload.input_text)
+        decision.setdefault("tool_name", "")
+        decision.setdefault("reason", "")
+        decision["need_tool"] = bool(decision.get("need_tool", False))
+        return decision
+    except Exception as exc:
+        return {
+            "need_tool": True,
+            "tool_name": "",
+            "query": payload.input_text,
+            "reason": f"Planner fallback: {exc}",
+        }
 
 
 def sse_event(event: str, data: dict) -> str:
@@ -129,11 +190,28 @@ async def stream_chat_chunks(
     payload: ChatMessageRequest,
 ) -> AsyncIterator[str]:
     system_prompt = payload.system_prompt or settings.default_system_prompt
-    agent = await build_chat_agent(settings, payload.temperature, system_prompt)
     trace_enabled = settings.agent_stream_trace_enabled
+    tools = await get_mcp_tools(settings)
+    agent = await build_chat_agent(settings, payload.temperature, system_prompt, tools=tools)
 
     config = {"configurable": {"thread_id": thread_id}}
     assistant_parts: list[str] = []
+
+    if trace_enabled:
+        planner = await _planner_decision(
+            settings=settings,
+            payload=payload,
+            system_prompt=system_prompt,
+            tools=tools,
+            has_tools=bool(tools),
+        )
+        logger.error(
+            "[planner-node] need_tool=%s tool_name=%s query=%s reason=%s",
+            planner.get("need_tool"),
+            planner.get("tool_name", ""),
+            planner.get("query", ""),
+            planner.get("reason", ""),
+        )
 
     yield sse_event(
         "start",
