@@ -15,6 +15,13 @@ from services.mcp_service import get_mcp_tools
 
 CHECKPOINTER = InMemorySaver()
 
+# TODO(shared-user-memory):
+# Keep full conversation memory isolated by `user_id + session_id`.
+# If we add cross-session memory later, introduce a separate user-level
+# memory layer keyed only by `user_id` for stable profile facts
+# (for example name, preferences, long-term background), rather than
+# sharing full chat history across sessions.
+
 
 def build_llm(settings: Settings, temperature: float, stream: bool = False) -> ChatOpenAI:
     return ChatOpenAI(
