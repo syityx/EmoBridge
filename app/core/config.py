@@ -41,6 +41,7 @@ class Settings:
     mcp_server_url: str
     mcp_server_name: str
     mcp_retry_cooldown_seconds: int
+    agent_stream_trace_enabled: bool
 
 
 # 只会构造一次并复用同一个对象
@@ -62,7 +63,10 @@ def get_settings() -> Settings:
         auth_jwt_secret=os.getenv("AUTH_JWT_SECRET", "demo-dev-secret-change-me"),
         auth_jwt_exp_minutes=_int_env("AUTH_JWT_EXP_MINUTES", 720),
         mcp_server_enabled=_bool_env("MCP_SERVER_ENABLED", True),
+        # mcp 服务器地址
         mcp_server_url=os.getenv("MCP_SERVER_URL", "http://localhost:8081/mcp"),
         mcp_server_name=os.getenv("MCP_SERVER_NAME", "emobridge-mcp"),
         mcp_retry_cooldown_seconds=_int_env("MCP_RETRY_COOLDOWN_SECONDS", 15),
+        # 是否展示agent执行的每一步细节日志
+        agent_stream_trace_enabled=_bool_env("AGENT_STREAM_TRACE_ENABLED", True),
     )

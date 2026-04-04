@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import AsyncIterator
+import logging
+from typing import Any, AsyncIterator
 
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
@@ -14,6 +15,7 @@ from services.mcp_service import get_mcp_tools
 
 # TODO：记忆持久化 & 管理（压缩、清理）
 CHECKPOINTER = InMemorySaver()
+logger = logging.getLogger(__name__)
 
 # TODO(shared-user-memory):
 # Keep full conversation memory isolated by `user_id + session_id`.
@@ -47,6 +49,27 @@ def _normalize_chunk_content(content: object) -> str:
         )
 
     return str(content)
+
+
+def _stringify_tool_calls(tool_calls: object) -> list[dict[str, Any]]:
+    if not isinstance(tool_calls, list):
+        return []
+
+    normalized: list[dict[str, Any]] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            normalized.append({"raw": str(call)})
+            continue
+
+        normalized.append(
+            {
+                "id": call.get("id"),
+                "name": call.get("name"),
+                "args": call.get("args"),
+                "type": call.get("type"),
+            }
+        )
+    return normalized
 
 
 def _message_role(message: BaseMessage) -> str:
@@ -107,6 +130,7 @@ async def stream_chat_chunks(
 ) -> AsyncIterator[str]:
     system_prompt = payload.system_prompt or settings.default_system_prompt
     agent = await build_chat_agent(settings, payload.temperature, system_prompt)
+    trace_enabled = settings.agent_stream_trace_enabled
 
     config = {"configurable": {"thread_id": thread_id}}
     assistant_parts: list[str] = []
@@ -126,8 +150,24 @@ async def stream_chat_chunks(
             config=config,
             stream_mode="messages",
         ):
+            if trace_enabled and isinstance(_metadata, dict):
+                node = _metadata.get("langgraph_node")
+                if node:
+                    # 使用error来符合输出等级，并不是实际error
+                    logger.error("[agent-node] %s", node)
+
+            chunk_type = getattr(chunk, "type", "")
+            if trace_enabled and chunk_type == "tool":
+                tool_result = _normalize_chunk_content(getattr(chunk, "content", "")).strip()
+                if tool_result:
+                    logger.error("[tool-result] %s", tool_result)
+
             if not isinstance(chunk, (AIMessage, AIMessageChunk)):
                 continue
+
+            tool_calls = _stringify_tool_calls(getattr(chunk, "tool_calls", None))
+            if trace_enabled and tool_calls:
+                logger.error("[tool-call] %s", json.dumps(tool_calls, ensure_ascii=False))
 
             token = _normalize_chunk_content(chunk.content)
             if not token:
@@ -136,6 +176,8 @@ async def stream_chat_chunks(
             yield sse_event("token", {"token": token})
 
         assistant_text = "".join(assistant_parts).strip()
+        if trace_enabled:
+            logger.error("[final-answer] %s", assistant_text)
         yield sse_event("done", {"reply": assistant_text})
     except Exception as exc:
         yield sse_event("error", {"error": f"Model or MCP tool call failed: {exc}"})
