@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: emobridge-mcp
+  ai:
+    mcp:
+      server:
+        enabled: true
+        name: emobridge-mcp-server
+        version: 1.0.0
+        type: SYNC
+        protocol: STREAMABLE
+        instructions: EmoBridge MCP server exposing placeholder tools.
+        streamable-http:
+          mcp-endpoint: /mcp
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+          completion: false
+
+logging:
+  level:
+    org.springframework.ai.mcp: INFO
+    io.modelcontextprotocol: INFO
+    com.syit.mcp: INFO

@@ -3,3 +3,4 @@ app/__pycache__/
 app/sessions/
 **/__pycache__/
 app/.env
+mcp/src/main/resources/application.yaml

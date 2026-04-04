@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterator
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -8,8 +8,8 @@ from fastapi.responses import StreamingResponse
 from core.config import get_settings
 from schemas.auth import CurrentUser
 from schemas.chat import ChatMessageRequest, SessionMessagesResponse
-from services.chat_service import get_thread_messages, stream_chat_chunks
 from services.auth_service import build_thread_id, get_current_user
+from services.chat_service import get_thread_messages, stream_chat_chunks
 from services.session_store import validate_session_id
 
 
@@ -56,11 +56,8 @@ def stream_session_message(
         payload=payload,
     )
 
-    def stream_with_log() -> Iterator[str]:
-        for token in stream:
-            # 控制台输出流式响应的 token，方便调试和观察
-            # print(f"[{session_id}] \n{token}", flush=True)
-            # yield 用在函数里，作用是“产出一个值并暂停函数”，下次继续从暂停位置往下执行。
+    async def stream_with_log() -> AsyncIterator[str]:
+        async for token in stream:
             yield token
 
     return StreamingResponse(

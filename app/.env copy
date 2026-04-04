@@ -1,0 +1,5 @@
+PORT = 8080
+
+OPENAI_API_KEY = sk-xxxxxxxxx
+OPENAI_BASE_URL = https://api.siliconflow.cn/v1
+MODEL_NAME = Pro/MiniMaxAI/MiniMax-M2.5

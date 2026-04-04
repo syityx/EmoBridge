@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import json
-from typing import Iterator
+from typing import AsyncIterator
 
-from langchain_core.messages import AIMessageChunk, BaseMessage
-from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 from core.config import Settings
 from schemas.chat import ChatMessageRequest, SessionMessage
+from services.mcp_service import get_mcp_tools
 
 
 CHECKPOINTER = InMemorySaver()
@@ -71,52 +72,54 @@ def get_thread_messages(session_id: str) -> list[SessionMessage]:
     return result
 
 
-def build_chat_agent(
+async def build_chat_agent(
     settings: Settings,
     temperature: float,
     system_prompt: str,
 ):
     llm = build_llm(settings, temperature, stream=True)
+    tools = await get_mcp_tools(settings)
 
     return create_agent(
-        model = llm,
-        tools = [],
-        system_prompt = system_prompt,
-        checkpointer = CHECKPOINTER,
+        model=llm,
+        tools=tools,
+        system_prompt=system_prompt,
+        checkpointer=CHECKPOINTER,
     )
 
 
-# 实现标准SSE帧格式的事件生成器，便于前端解析和处理不同类型的事件。
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def stream_chat_chunks(
+async def stream_chat_chunks(
     settings: Settings,
     thread_id: str,
     session_id: str,
     payload: ChatMessageRequest,
-) -> Iterator[str]:
-    # 使用 LangChain 内置短期记忆：通过 thread_id 自动维护会话上下文。
+) -> AsyncIterator[str]:
     system_prompt = payload.system_prompt or settings.default_system_prompt
-    agent = build_chat_agent(settings, payload.temperature, system_prompt)
+    agent = await build_chat_agent(settings, payload.temperature, system_prompt)
 
     config = {"configurable": {"thread_id": thread_id}}
-
-    # assistant_parts 用于累积完整回复，便于最终落盘保存。
     assistant_parts: list[str] = []
 
-    # 先发 start 事件，便于前端初始化流状态。
-    yield sse_event("start", {"session_id": session_id, "model": settings.model_name})
+    yield sse_event(
+        "start",
+        {
+            "session_id": session_id,
+            "model": settings.model_name,
+            "mcp_enabled": settings.mcp_server_enabled,
+        },
+    )
 
     try:
-        # 按 agent 输出分片逐段向上游 yield，实现真正流式返回。
-        for chunk, _metadata in agent.stream(
+        async for chunk, _metadata in agent.astream(
             {"messages": [{"role": "user", "content": payload.input_text}]},
             config=config,
             stream_mode="messages",
         ):
-            if not isinstance(chunk, AIMessageChunk):
+            if not isinstance(chunk, (AIMessage, AIMessageChunk)):
                 continue
 
             token = _normalize_chunk_content(chunk.content)
@@ -125,9 +128,7 @@ def stream_chat_chunks(
             assistant_parts.append(token)
             yield sse_event("token", {"token": token})
 
-        # 正常完成后，返回完整助手回复。
         assistant_text = "".join(assistant_parts).strip()
         yield sse_event("done", {"reply": assistant_text})
     except Exception as exc:
-        # 异常时向前端返回可见错误文本，避免静默失败。
-        yield sse_event("error", {"error": f"调用模型失败：{exc}"})
+        yield sse_event("error", {"error": f"Model or MCP tool call failed: {exc}"})
