@@ -12,7 +12,7 @@ from core.config import Settings
 from schemas.chat import ChatMessageRequest, SessionMessage
 from services.mcp_service import get_mcp_tools
 
-
+# TODO：记忆持久化 & 管理（压缩、清理）
 CHECKPOINTER = InMemorySaver()
 
 # TODO(shared-user-memory):

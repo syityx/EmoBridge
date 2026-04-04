@@ -52,8 +52,10 @@ class McpToolRegistry:
     async def _load_tools(self, settings: Settings) -> list[Any]:
         client = MultiServerMCPClient(
             {
+                # 只使用一个 MCP 服务器，key 可以是任意值，这里用服务器名称方便调试
+                # settings是整个进程共享的
                 settings.mcp_server_name: {
-                    "transport": "http",
+                    "transport": "streamable_http",
                     "url": settings.mcp_server_url,
                 }
             }

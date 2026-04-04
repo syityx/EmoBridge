@@ -43,6 +43,7 @@ class Settings:
     mcp_retry_cooldown_seconds: int
 
 
+# 只会构造一次并复用同一个对象
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings(
@@ -53,7 +54,10 @@ def get_settings() -> Settings:
         app_port=_int_env("PORT", 8080),
         default_system_prompt=os.getenv(
             "DEFAULT_SYSTEM_PROMPT",
-            "You are a helpful assistant. Use available MCP tools when they can improve the answer.",
+            "You are a helpful assistant. Use available MCP tools when they can improve the answer."
+            # TODO 实现Agentic RAG：当问题涉及知识库事实时先调用 RAG_Search_tool；证据不足时再改写 query 进行第二次检索；回答要带来源标识
+            # + "问题涉及知识库事实时先调用 RAG_Search_tool；证据不足时再改写 query 进行第二次检索；回答要带来源标识"
+            ,
         ),
         auth_jwt_secret=os.getenv("AUTH_JWT_SECRET", "demo-dev-secret-change-me"),
         auth_jwt_exp_minutes=_int_env("AUTH_JWT_EXP_MINUTES", 720),
