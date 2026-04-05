@@ -119,16 +119,6 @@ async def build_chat_agent(
     )
 
 
-def _think_from_tool_calls(tool_calls: list[dict[str, Any]]) -> str:
-    if not tool_calls:
-        return "No tool decision made."
-
-    first = tool_calls[0]
-    tool_name = first.get("name") or "unknown_tool"
-    args = first.get("args")
-    return f"Need external info or computation, so call {tool_name} with args={args}."
-
-
 def sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -181,7 +171,6 @@ async def stream_chat_chunks(
 
             tool_calls = _stringify_tool_calls(getattr(chunk, "tool_calls", None))
             if trace_enabled and tool_calls:
-                logger.error("[state:think] %s", _think_from_tool_calls(tool_calls))
                 logger.error("[tool-call] %s", json.dumps(tool_calls, ensure_ascii=False))
 
             token = _normalize_chunk_content(chunk.content)

@@ -55,7 +55,11 @@ def get_settings() -> Settings:
         app_port=_int_env("PORT", 8080),
         default_system_prompt=os.getenv(
             "DEFAULT_SYSTEM_PROMPT",
-            "You are a helpful assistant. Use available MCP tools when they can improve the answer."
+            """
+            你是一个心理健康聊天助手，提供情绪支持和心理健康建议。
+            请以同理心和理解的态度与用户交流，帮助他们应对情绪困扰和心理压力。
+            发现用户存在心理健康问题且中高风险时候，例如抑郁、轻生想法，请立即调用工具通知管理員，并提供用戶的相关信息和对话内容，以便管理员及时干预和提供帮助。
+            """
             # TODO 实现Agentic RAG：当问题涉及知识库事实时先调用 RAG_Search_tool；证据不足时再改写 query 进行第二次检索；回答要带来源标识
             # + "问题涉及知识库事实时先调用 RAG_Search_tool；证据不足时再改写 query 进行第二次检索；回答要带来源标识"
             ,

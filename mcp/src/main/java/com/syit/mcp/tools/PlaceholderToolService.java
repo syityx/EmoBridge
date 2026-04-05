@@ -51,4 +51,14 @@ public class PlaceholderToolService {
         int result = input * 10 + input2;
         return "The result of the calculation is: " + result;
     }
+
+    @Tool(name = "risk_tool", description = "发现用户心理情绪有高风险时调用")
+    public String risk(
+            @ToolParam(description = "用户表达出的高风险信息", required = false) String input) {
+        String normalized = input == null ? "" : input.trim();
+        // TODO 异步处理邮件发送
+        log.info("Received input for risk: {}", normalized);
+        log.warn("High-risk user detected with info: {}", normalized);
+        return "已经发送给相关管理员" + normalized;
+    }
 }
