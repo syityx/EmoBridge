@@ -179,6 +179,7 @@ function scrollToBottom() {
 
 function appendAssistantText(targetMessage, chunk) {
   targetMessage.text += chunk
+  targetMessage.text = targetMessage.text.replace(/^[\r\n]+/, '')
 }
 
 function sleep(ms) {
