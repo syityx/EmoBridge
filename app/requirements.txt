@@ -7,3 +7,5 @@ langgraph
 python-dotenv
 pydantic
 PyJWT
+SQLAlchemy
+pymysql

@@ -12,7 +12,9 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user_id: str
+    user_name: str | None = None
 
 
 class CurrentUser(BaseModel):
     user_id: str
+    user_name: str | None = None

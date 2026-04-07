@@ -5,6 +5,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
 const SYSTEM_NAME = 'EmoBridge智能助手'
 const TOKEN_STORAGE_KEY = 'demo_access_token'
 const USER_STORAGE_KEY = 'demo_user_id'
+const USER_NAME_STORAGE_KEY = 'demo_user_name'
 
 function createSessionId() {
   return `session_${Date.now()}`
@@ -14,6 +15,7 @@ const storedSessionId = localStorage.getItem('chat_session_id')
 const sessionId = ref(storedSessionId || createSessionId())
 const authToken = ref(localStorage.getItem(TOKEN_STORAGE_KEY) || '')
 const currentUserId = ref(localStorage.getItem(USER_STORAGE_KEY) || '')
+const currentUserName = ref(localStorage.getItem(USER_NAME_STORAGE_KEY) || '')
 const loginForm = reactive({
   username: 'alice',
   password: ''
@@ -42,18 +44,22 @@ function isAssistantPending(item) {
   return item.role === 'assistant' && isStreaming.value && !item.text.trim()
 }
 
-function saveAuth(token, userId) {
+function saveAuth(token, userId, userName = '') {
   authToken.value = token
   currentUserId.value = userId
+  currentUserName.value = userName || userId
   localStorage.setItem(TOKEN_STORAGE_KEY, token)
   localStorage.setItem(USER_STORAGE_KEY, userId)
+  localStorage.setItem(USER_NAME_STORAGE_KEY, currentUserName.value)
 }
 
 function clearAuth() {
   authToken.value = ''
   currentUserId.value = ''
+  currentUserName.value = ''
   localStorage.removeItem(TOKEN_STORAGE_KEY)
   localStorage.removeItem(USER_STORAGE_KEY)
+  localStorage.removeItem(USER_NAME_STORAGE_KEY)
 }
 
 async function verifyStoredToken() {
@@ -83,7 +89,7 @@ async function verifyStoredToken() {
       return
     }
 
-    saveAuth(authToken.value, result.user_id)
+    saveAuth(authToken.value, result.user_id, result.user_name || currentUserName.value)
   } catch {
     clearAuth()
   } finally {
@@ -138,12 +144,12 @@ async function login() {
       throw new Error(result?.detail || `登录失败（${response.status}）`)
     }
 
-    saveAuth(result.access_token || '', result.user_id || '')
+    saveAuth(result.access_token || '', result.user_id || '', result.user_name || result.user_id || '')
     if (!isLoggedIn.value) {
       throw new Error('登录响应缺少 access_token 或 user_id')
     }
     resetSession()
-    resetMessagesForUser(currentUserId.value)
+    resetMessagesForUser(currentUserName.value || currentUserId.value)
   } catch (error) {
     loginError.value = error?.message || '登录失败'
   } finally {
@@ -442,7 +448,7 @@ onBeforeUnmount(() => {
     <header class="chat-header">
       <div class="title-area">
         <h1>{{ SYSTEM_NAME }}</h1>
-        <p>用户：{{ currentUserId }} · 多轮会话 · SSE 流式返回</p>
+        <p>用户：{{ currentUserName || currentUserId }} · 多轮会话 · SSE 流式返回</p>
       </div>
       <div class="session-tools">
         <label>

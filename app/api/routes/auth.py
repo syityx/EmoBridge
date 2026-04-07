@@ -1,25 +1,37 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+import logging
 
+from core.database import get_db
 from schemas.auth import CurrentUser, LoginRequest, LoginResponse
-from services.auth_service import create_access_token, get_current_user, normalize_user_id
+from services.auth_service import (
+    AuthTemporaryError,
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+)
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api/v1", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest) -> LoginResponse:
-    # demo 登录：不校验密码，仅按用户名签发 token 用于用户隔离演示。
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     try:
-        # Syit -> Syit
-        user_id = normalize_user_id(payload.username)
+        user_id = authenticate_user(db, payload.username, payload.password)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AuthTemporaryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    if not user_id:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     token = create_access_token(user_id)
-    return LoginResponse(access_token=token, user_id=user_id)
+    return LoginResponse(access_token=token, user_id=user_id, user_name=payload.username)
 
 
 @router.get("/me", response_model=CurrentUser)

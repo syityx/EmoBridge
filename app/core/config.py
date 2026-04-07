@@ -37,6 +37,7 @@ class Settings:
     default_system_prompt: str
     auth_jwt_secret: str
     auth_jwt_exp_minutes: int
+    auth_db_url: str
     mcp_server_enabled: bool
     mcp_server_url: str
     mcp_server_name: str
@@ -66,6 +67,10 @@ def get_settings() -> Settings:
         ),
         auth_jwt_secret=os.getenv("AUTH_JWT_SECRET", "demo-dev-secret-change-me"),
         auth_jwt_exp_minutes=_int_env("AUTH_JWT_EXP_MINUTES", 720),
+        auth_db_url=os.getenv(
+            "AUTH_DB_URL",
+            "mysql+pymysql://emobridge_user:020305@10.12.37.175:3306/emobridge?charset=utf8mb4",
+        ),
         mcp_server_enabled=_bool_env("MCP_SERVER_ENABLED", True),
         # mcp 服务器地址
         mcp_server_url=os.getenv("MCP_SERVER_URL", "http://localhost:8081/mcp"),

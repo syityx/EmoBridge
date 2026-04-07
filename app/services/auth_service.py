@@ -1,25 +1,60 @@
 from __future__ import annotations
 
 import re
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import jwt
 from fastapi import Header, HTTPException, status
 from jwt import InvalidTokenError
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from core.config import get_settings
+from core.config import Settings, get_settings
+from models.user import User
 from schemas.auth import CurrentUser
 
 
 USER_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,32}$")
 
 
-def normalize_user_id(username: str) -> str:
+class AuthTemporaryError(RuntimeError):
+    pass
+
+
+def normalize_username(username: str) -> str:
     value = username.strip().lower()
     if not USER_NAME_PATTERN.fullmatch(value):
         raise ValueError("username 仅允许 1-32 位字母、数字、下划线和中划线")
     return value
+
+
+def authenticate_user(db: Session, username: str, password: str | None) -> str | None:
+    normalized_username = normalize_username(username)
+    password_input = (password or "")
+
+    try:
+        stmt = select(User).where(User.username == normalized_username).limit(1)
+        user = db.execute(stmt).scalar_one_or_none()
+    except SQLAlchemyError as exc:
+        raise AuthTemporaryError(f"认证数据库查询失败: {exc}") from exc
+
+    if user is None:
+        return None
+
+    db_user_id = user.id
+    db_password = user.password
+    # 检验数据库中的密码是否为字符串（理论上应该是，但以防万一）
+    if not isinstance(db_password, str):
+        return None
+
+    """ 使用 hmac.compare_digest 进行安全的字符串比较，防止时序攻击 """
+    if not hmac.compare_digest(password_input, db_password):
+        return None
+
+    return str(db_user_id)
 
 
 def build_thread_id(user_id: str, client_session_id: str) -> str:
