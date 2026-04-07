@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
-const SYSTEM_NAME = '智能助手'
+const SYSTEM_NAME = 'EmoBridge智能助手'
 const TOKEN_STORAGE_KEY = 'demo_access_token'
 const USER_STORAGE_KEY = 'demo_user_id'
 
@@ -37,6 +37,10 @@ const messages = ref([
 
 const canSend = computed(() => !isStreaming.value && inputText.value.trim().length > 0)
 const isLoggedIn = computed(() => !!authToken.value && !!currentUserId.value)
+
+function isAssistantPending(item) {
+  return item.role === 'assistant' && isStreaming.value && !item.text.trim()
+}
 
 function saveAuth(token, userId) {
   authToken.value = token
@@ -453,7 +457,16 @@ onBeforeUnmount(() => {
     <main ref="chatListRef" class="chat-list">
       <div v-for="item in messages" :key="item.id" class="row" :class="item.role">
         <div class="avatar">{{ item.role === 'user' ? '我' : 'AI' }}</div>
-        <article class="bubble">{{ item.text }}</article>
+        <article class="bubble" :class="{ pending: isAssistantPending(item) }">
+          <template v-if="isAssistantPending(item)">
+            <span class="typing-loader" aria-label="助手正在思考">
+              <span class="typing-dot"></span>
+              <span class="typing-dot"></span>
+              <span class="typing-dot"></span>
+            </span>
+          </template>
+          <template v-else>{{ item.text }}</template>
+        </article>
       </div>
     </main>
 

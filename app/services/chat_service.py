@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ class ThreadMemoryState:
 
 _THREAD_MEMORY: dict[str, ThreadMemoryState] = {}
 _THREAD_MEMORY_LOCK = Lock()
+_COMPACTION_TASKS: dict[str, asyncio.Task[None]] = {}
 
 # TODO(shared-user-memory):
 # Keep full conversation memory isolated by `user_id + session_id`.
@@ -84,6 +86,7 @@ def _stringify_tool_calls(tool_calls: object) -> list[dict[str, Any]]:
 
 
 def _copy_thread_memory(thread_id: str) -> ThreadMemoryState:
+    # 获取当前记忆状态的副本，避免在异步操作中被修改
     with _THREAD_MEMORY_LOCK:
         state = _THREAD_MEMORY.get(thread_id)
         if state is None:
@@ -95,6 +98,7 @@ def _copy_thread_memory(thread_id: str) -> ThreadMemoryState:
 
 
 def _save_thread_memory(thread_id: str, state: ThreadMemoryState) -> None:
+    # 保存更新后的记忆状态，覆盖原有状态
     with _THREAD_MEMORY_LOCK:
         _THREAD_MEMORY[thread_id] = ThreadMemoryState(
             summary=state.summary,
@@ -103,6 +107,7 @@ def _save_thread_memory(thread_id: str, state: ThreadMemoryState) -> None:
 
 
 def _append_thread_messages(thread_id: str, messages: list[SessionMessage]) -> ThreadMemoryState:
+    # 在当前记忆状态的基础上追加新的消息，并返回更新后的状态
     with _THREAD_MEMORY_LOCK:
         state = _THREAD_MEMORY.setdefault(thread_id, ThreadMemoryState())
         state.messages.extend(
@@ -152,6 +157,7 @@ def _build_conversation_messages(
     memory_state: ThreadMemoryState,
     user_input: str,
 ) -> list[dict[str, str]]:
+    # 构建对话消息列表，包含记忆摘要、历史消息和当前用户输入，供模型生成回复时参考
     messages: list[dict[str, str]] = []
     memory_context = _build_memory_context_prompt(memory_state.summary)
     if memory_context:
@@ -209,15 +215,46 @@ async def _compact_thread_memory(settings: Settings, thread_id: str) -> ThreadMe
     return compacted_state
 
 
-async def _append_and_compact_thread_memory(
+def _mark_compaction_task_done(thread_id: str, task: asyncio.Task[None]) -> None:
+    # 当后台压缩任务完成时，检查当前任务是否仍然是该线程的活跃压缩任务，如果是则清除记录，允许未来启动新的压缩任务。
+    with _THREAD_MEMORY_LOCK:
+        current = _COMPACTION_TASKS.get(thread_id)
+        if current is task:
+            _COMPACTION_TASKS.pop(thread_id, None)
+
+
+async def _run_compaction_task(settings: Settings, thread_id: str) -> None:
+    try:
+        await _compact_thread_memory(settings, thread_id)
+    except Exception as exc:
+        logger.warning("Background memory compaction failed for %s: %s", thread_id, exc)
+
+
+async def _schedule_thread_compaction(settings: Settings, thread_id: str) -> None:
+    # 这个函数的作用是检查当前线程的记忆状态，如果消息数量超过阈值且没有正在运行的压缩任务，就启动一个新的后台压缩任务。
+    state = _copy_thread_memory(thread_id)
+    if len(state.messages) <= MAX_FULL_MESSAGES:
+        return
+
+    with _THREAD_MEMORY_LOCK:
+        existing = _COMPACTION_TASKS.get(thread_id)
+        if existing is not None and not existing.done():
+            return
+
+        task = asyncio.create_task(_run_compaction_task(settings, thread_id))
+        _COMPACTION_TASKS[thread_id] = task
+
+    task.add_done_callback(lambda done_task: _mark_compaction_task_done(thread_id, done_task))
+
+
+async def _append_and_schedule_thread_compaction(
     settings: Settings,
     thread_id: str,
     messages: list[SessionMessage],
 ) -> ThreadMemoryState:
     state = _append_thread_messages(thread_id, messages)
-    if len(state.messages) <= MAX_FULL_MESSAGES:
-        return state
-    return await _compact_thread_memory(settings, thread_id)
+    await _schedule_thread_compaction(settings, thread_id)
+    return state
 
 
 async def build_chat_agent(
@@ -251,7 +288,8 @@ async def stream_chat_chunks(
     tools = await get_mcp_tools(settings)
     agent = await build_chat_agent(settings, payload.temperature, system_prompt, tools=tools)
 
-    memory_state = await _compact_thread_memory(settings, thread_id)
+    memory_state = _copy_thread_memory(thread_id)
+    await _schedule_thread_compaction(settings, thread_id)
     assistant_parts: list[str] = []
 
     yield sse_event(
@@ -300,7 +338,7 @@ async def stream_chat_chunks(
             logger.error("[final-answer] %s", assistant_text)
         yield sse_event("done", {"reply": assistant_text})
 
-        updated_memory = await _append_and_compact_thread_memory(
+        updated_memory = await _append_and_schedule_thread_compaction(
             settings,
             thread_id,
             [
@@ -309,10 +347,15 @@ async def stream_chat_chunks(
             ],
         )
         if trace_enabled:
+            compaction_running = False
+            with _THREAD_MEMORY_LOCK:
+                task = _COMPACTION_TASKS.get(thread_id)
+                compaction_running = task is not None and not task.done()
             logger.error(
-                "[memory] rounds=%s summary_chars=%s",
+                "[memory] rounds=%s summary_chars=%s compaction_running=%s",
                 len(updated_memory.messages) // 2,
                 len(updated_memory.summary),
+                compaction_running,
             )
     except Exception as exc:
         yield sse_event("error", {"error": f"Model or MCP tool call failed: {exc}"})
