@@ -303,7 +303,7 @@ async def stream_chat_chunks(
 
     try:
         last_node = ""
-        async for chunk, _metadata in agent.astream(
+        for chunk, _metadata in agent.stream(
             {"messages": _build_conversation_messages(memory_state, payload.input_text)},
             stream_mode="messages",
         ):
