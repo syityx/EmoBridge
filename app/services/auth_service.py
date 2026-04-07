@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import re
-import hmac
 import hashlib
+import hmac
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
+import bcrypt
 import jwt
 from fastapi import Depends, Header, HTTPException, status
 from jwt import InvalidTokenError
@@ -34,41 +35,84 @@ def normalize_username(username: str) -> str:
     return value
 
 
-def authenticate_user(db: Session, username: str, password: str | None) -> str | None:
-    normalized_username = normalize_username(username)
-    password_input = (password or "")
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
 
+
+def _verify_password(raw_password: str, stored_password: str) -> bool:
+    if stored_password.startswith(("$2a$", "$2b$", "$2y$")):
+        try:
+            return bcrypt.checkpw(raw_password.encode("utf-8"), stored_password.encode("utf-8"))
+        except ValueError:
+            return False
+
+    # 兼容旧数据迁移期的明文密码；新注册只会写入 bcrypt 哈希。
+    return hmac.compare_digest(raw_password, stored_password)
+
+
+def _fetch_user_by_username(db: Session, username: str) -> User | None:
     try:
-        stmt = select(User).where(User.username == normalized_username).limit(1)
-        user = db.execute(stmt).scalar_one_or_none()
+        stmt = select(User).where(User.username == username).limit(1)
+        return db.execute(stmt).scalar_one_or_none()
     except SQLAlchemyError as exc:
         raise AuthTemporaryError(f"认证数据库查询失败: {exc}") from exc
+
+
+def register_user(db: Session, username: str, password: str) -> tuple[int, str]:
+    normalized_username = normalize_username(username)
+    if not password.strip():
+        raise ValueError("password 不能为空")
+
+    existing_user = _fetch_user_by_username(db, normalized_username)
+    if existing_user is not None:
+        raise ValueError("用户名已存在")
+
+    password_hash = _hash_password(password)
+
+    try:
+        user = User(username=normalized_username, password=password_hash)
+        db.add(user)
+        db.flush()
+        user_id = user.id
+        if not isinstance(user_id, int):
+            raise AuthTemporaryError("注册用户失败: 数据库未返回有效的自增主键")
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise AuthTemporaryError(f"注册用户失败: {exc}") from exc
+
+    return user_id, normalized_username
+
+
+def authenticate_user(db: Session, username: str, password: str | None) -> tuple[int, str] | None:
+    normalized_username = normalize_username(username)
+    password_input = password or ""
+
+    user = _fetch_user_by_username(db, normalized_username)
 
     if user is None:
         return None
 
     db_user_id = user.id
     db_password = user.password
-    # 检验数据库中的密码是否为字符串（理论上应该是，但以防万一）
-    if not isinstance(db_password, str):
+    if not isinstance(db_user_id, int) or not isinstance(db_password, str):
         return None
 
-    """ 使用 hmac.compare_digest 进行安全的字符串比较，防止时序攻击 """
-    if not hmac.compare_digest(password_input, db_password):
+    if not _verify_password(password_input, db_password):
         return None
 
-    return str(db_user_id)
+    return db_user_id, user.username
 
 
-def build_thread_id(user_id: str, client_session_id: str) -> str:
+def build_thread_id(user_id: int | str, client_session_id: str) -> str:
     return f"{user_id}:{client_session_id}"
 
 
-def create_access_token(user_id: str) -> str:
+def create_access_token(user_id: int | str) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": user_id,
+        "sub": str(user_id),
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=settings.auth_jwt_exp_minutes)).timestamp()),
     }
@@ -92,7 +136,7 @@ def _decode_token_payload(token: str) -> dict:
         raise ValueError("无效的 access token") from exc
 
 
-def blacklist_access_token(db: Session, token: str, user_id: str) -> None:
+def blacklist_access_token(db: Session, token: str, user_id: int | str) -> None:
     payload = _decode_token_payload(token)
     exp_ts = payload.get("exp")
     if not isinstance(exp_ts, int):
@@ -112,12 +156,15 @@ def blacklist_access_token(db: Session, token: str, user_id: str) -> None:
         db.add(
             TokenBlacklist(
                 token_hash=token_hash,
-                user_id=user_id,
+                user_id=int(user_id),
                 expires_at=expires_at,
                 revoked_at=revoked_at,
             )
         )
         db.commit()
+    except (TypeError, ValueError) as exc:
+        db.rollback()
+        raise ValueError(f"无效的 user_id: {exc}") from exc
     except SQLAlchemyError as exc:
         db.rollback()
         raise AuthTemporaryError(f"写入令牌黑名单失败: {exc}") from exc
@@ -134,7 +181,7 @@ def is_token_blacklisted(db: Session, token: str) -> bool:
         raise AuthTemporaryError(f"查询令牌黑名单失败: {exc}") from exc
 
 
-def decode_access_token(token: str) -> str:
+def decode_access_token(token: str) -> int:
     settings = get_settings()
     try:
         # 此处会自动检查是否过期（基于当前UTC时间）
@@ -145,7 +192,11 @@ def decode_access_token(token: str) -> str:
     subject = payload.get("sub", "")
     if not isinstance(subject, str) or not subject:
         raise ValueError("token 缺少有效用户标识")
-    return subject
+
+    try:
+        return int(subject)
+    except ValueError as exc:
+        raise ValueError("token 中的用户标识不是有效的整数") from exc
 
 
 def extract_bearer_token(authorization: str | None) -> str:

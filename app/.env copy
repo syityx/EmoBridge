@@ -1,5 +1,13 @@
 PORT = 8080
 
-OPENAI_API_KEY = sk-xxxxxxxxx
+# OpenAI API configuration
+OPENAI_API_KEY = sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 OPENAI_BASE_URL = https://api.siliconflow.cn/v1
 MODEL_NAME = Pro/MiniMaxAI/MiniMax-M2.5
+
+# Authentication configuration
+AUTH_JWT_SECRET = hello-zhu-ni-tian-tian-kai-xin-from-syit
+AUTH_JWT_EXP_MINUTES = 10080
+
+# Database configuration
+AUTH_DB_URL = mysql+pymysql://emobridge_user:020305@10.12.37.175:3306/emobridge?charset=utf8mb4

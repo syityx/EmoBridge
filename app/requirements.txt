@@ -9,3 +9,4 @@ pydantic
 PyJWT
 SQLAlchemy
 pymysql
+bcrypt

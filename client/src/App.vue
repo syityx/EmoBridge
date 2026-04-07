@@ -6,6 +6,8 @@ const SYSTEM_NAME = 'EmoBridge智能助手'
 const TOKEN_STORAGE_KEY = 'demo_access_token'
 const USER_STORAGE_KEY = 'demo_user_id'
 const USER_NAME_STORAGE_KEY = 'demo_user_name'
+const AUTH_MODE_LOGIN = 'login'
+const AUTH_MODE_REGISTER = 'register'
 
 function createSessionId() {
   return `session_${Date.now()}`
@@ -16,6 +18,7 @@ const sessionId = ref(storedSessionId || createSessionId())
 const authToken = ref(localStorage.getItem(TOKEN_STORAGE_KEY) || '')
 const currentUserId = ref(localStorage.getItem(USER_STORAGE_KEY) || '')
 const currentUserName = ref(localStorage.getItem(USER_NAME_STORAGE_KEY) || '')
+const authMode = ref(AUTH_MODE_LOGIN)
 const loginForm = reactive({
   username: 'alice',
   password: ''
@@ -51,6 +54,11 @@ function saveAuth(token, userId, userName = '') {
   localStorage.setItem(TOKEN_STORAGE_KEY, token)
   localStorage.setItem(USER_STORAGE_KEY, userId)
   localStorage.setItem(USER_NAME_STORAGE_KEY, currentUserName.value)
+}
+
+function switchAuthMode(mode) {
+  authMode.value = mode
+  loginError.value = ''
 }
 
 function clearAuth() {
@@ -152,6 +160,53 @@ async function login() {
     resetMessagesForUser(currentUserName.value || currentUserId.value)
   } catch (error) {
     loginError.value = error?.message || '登录失败'
+  } finally {
+    isAuthLoading.value = false
+  }
+}
+
+async function register() {
+  const username = loginForm.username.trim()
+  const password = loginForm.password
+
+  if (!username) {
+    loginError.value = '请输入用户名。'
+    return
+  }
+
+  if (!password || password.length < 8) {
+    loginError.value = '注册密码至少 8 位。'
+    return
+  }
+
+  loginError.value = ''
+  isAuthLoading.value = true
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        username,
+        password
+      })
+    })
+
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(result?.detail || `注册失败（${response.status}）`)
+    }
+
+    saveAuth(result.access_token || '', result.user_id || '', result.user_name || result.user_id || '')
+    if (!isLoggedIn.value) {
+      throw new Error('注册响应缺少 access_token 或 user_id')
+    }
+    resetSession()
+    resetMessagesForUser(currentUserName.value || currentUserId.value)
+  } catch (error) {
+    loginError.value = error?.message || '注册失败'
   } finally {
     isAuthLoading.value = false
   }
@@ -449,20 +504,51 @@ onBeforeUnmount(() => {
 
   <div v-else-if="!isLoggedIn" class="auth-shell">
     <section class="auth-card">
-      <h1>Demo 登录</h1>
-      <p>输入用户名即可登录，后端会签发 JWT 用于会话隔离演示。</p>
+      <h1>{{ authMode === AUTH_MODE_LOGIN ? 'Demo 登录' : '注册账号' }}</h1>
+      <p>
+        {{ authMode === AUTH_MODE_LOGIN ? '输入用户名即可登录，后端会签发 JWT 用于会话隔离演示。' : '创建账号后会自动登录，密码将由后端使用 bcrypt 安全存储。' }}
+      </p>
       <label>
         用户名
         <input v-model="loginForm.username" type="text" placeholder="例如 alice" />
       </label>
       <label>
-        密码（演示可空）
-        <input v-model="loginForm.password" type="password" placeholder="可不填" />
+        密码{{ authMode === AUTH_MODE_REGISTER ? '（至少 8 位）' : '（演示可空）' }}
+        <input
+          v-model="loginForm.password"
+          type="password"
+          :placeholder="authMode === AUTH_MODE_REGISTER ? '请输入至少 8 位密码' : '可不填'"
+        />
       </label>
       <p v-if="loginError" class="error">{{ loginError }}</p>
-      <button class="primary" :disabled="isAuthLoading" type="button" @click="login">
-        {{ isAuthLoading ? '登录中...' : '登录' }}
-      </button>
+      <div class="actions auth-actions">
+        <button
+          class="ghost"
+          :disabled="isAuthLoading"
+          type="button"
+          @click="switchAuthMode(authMode === AUTH_MODE_LOGIN ? AUTH_MODE_REGISTER : AUTH_MODE_LOGIN)"
+        >
+          {{ authMode === AUTH_MODE_LOGIN ? '去注册' : '返回登录' }}
+        </button>
+        <button
+          v-if="authMode === AUTH_MODE_LOGIN"
+          class="primary"
+          :disabled="isAuthLoading"
+          type="button"
+          @click="login"
+        >
+          {{ isAuthLoading ? '登录中...' : '登录' }}
+        </button>
+        <button
+          v-else
+          class="primary"
+          :disabled="isAuthLoading"
+          type="button"
+          @click="register"
+        >
+          {{ isAuthLoading ? '注册中...' : '注册并登录' }}
+        </button>
+      </div>
     </section>
   </div>
 
