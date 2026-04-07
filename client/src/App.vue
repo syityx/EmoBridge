@@ -50,7 +50,7 @@ function isAssistantPending(item) {
 function saveAuth(token, userId, userName = '') {
   authToken.value = token
   currentUserId.value = userId
-  currentUserName.value = userName || userId
+  currentUserName.value = userName
   localStorage.setItem(TOKEN_STORAGE_KEY, token)
   localStorage.setItem(USER_STORAGE_KEY, userId)
   localStorage.setItem(USER_NAME_STORAGE_KEY, currentUserName.value)
@@ -157,7 +157,7 @@ async function login() {
       throw new Error('登录响应缺少 access_token 或 user_id')
     }
     resetSession()
-    resetMessagesForUser(currentUserName.value || currentUserId.value)
+    resetMessagesForUser(currentUserName.value)
   } catch (error) {
     loginError.value = error?.message || '登录失败'
   } finally {
@@ -204,7 +204,7 @@ async function register() {
       throw new Error('注册响应缺少 access_token 或 user_id')
     }
     resetSession()
-    resetMessagesForUser(currentUserName.value || currentUserId.value)
+    resetMessagesForUser(currentUserName.value)
   } catch (error) {
     loginError.value = error?.message || '注册失败'
   } finally {
@@ -482,7 +482,7 @@ onMounted(async () => {
   await verifyStoredToken()
   saveSessionId()
   if (isLoggedIn.value) {
-    resetMessagesForUser(currentUserId.value)
+    resetMessagesForUser(currentUserName.value)
   }
   scrollToBottom()
 })
@@ -556,7 +556,7 @@ onBeforeUnmount(() => {
     <header class="chat-header">
       <div class="title-area">
         <h1>{{ SYSTEM_NAME }}</h1>
-        <p>用户：{{ currentUserName || currentUserId }} · 多轮会话 · SSE 流式返回</p>
+        <p>用户：{{ currentUserName}} · 多轮会话 · SSE 流式返回</p>
       </div>
       <div class="session-tools">
         <label>
