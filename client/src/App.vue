@@ -157,8 +157,30 @@ async function login() {
   }
 }
 
-function logout() {
+async function logout() {
   stopStreaming()
+  errorText.value = ''
+
+  if (authToken.value) {
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/logout`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${authToken.value}`
+        }
+      })
+
+      if (response.status !== 401 && !response.ok) {
+        const result = await response.json().catch(() => ({}))
+        throw new Error(result?.detail || `退出失败（${response.status}）`)
+      }
+    } catch (error) {
+      errorText.value = error?.message || '退出失败，请重试。'
+      return
+    }
+  }
+
   clearAuth()
   loginForm.password = ''
 }

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 import logging
 
@@ -9,7 +11,9 @@ from schemas.auth import CurrentUser, LoginRequest, LoginResponse
 from services.auth_service import (
     AuthTemporaryError,
     authenticate_user,
+    blacklist_access_token,
     create_access_token,
+    extract_bearer_token,
     get_current_user,
 )
 logger = logging.getLogger(__name__)
@@ -37,3 +41,20 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
 @router.get("/me", response_model=CurrentUser)
 def get_me(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     return current_user
+
+
+@router.post("/logout")
+def logout(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+) -> dict[str, str]:
+    token = extract_bearer_token(authorization)
+    try:
+        blacklist_access_token(db, token, current_user.user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except AuthTemporaryError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {"message": "已退出登录"}

@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import re
 import hmac
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import jwt
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from jwt import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from core.config import Settings, get_settings
+from core.config import get_settings
+from core.database import get_db
+from models.token_blacklist import TokenBlacklist
 from models.user import User
 from schemas.auth import CurrentUser
 
@@ -72,6 +75,65 @@ def create_access_token(user_id: str) -> str:
     return jwt.encode(payload, settings.auth_jwt_secret, algorithm="HS256")
 
 
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _decode_token_payload(token: str) -> dict:
+    settings = get_settings()
+    try:
+        return jwt.decode(
+            token,
+            settings.auth_jwt_secret,
+            algorithms=["HS256"],
+            options={"verify_exp": False},
+        )
+    except InvalidTokenError as exc:
+        raise ValueError("无效的 access token") from exc
+
+
+def blacklist_access_token(db: Session, token: str, user_id: str) -> None:
+    payload = _decode_token_payload(token)
+    exp_ts = payload.get("exp")
+    if not isinstance(exp_ts, int):
+        raise ValueError("token 缺少有效过期时间")
+
+    token_hash = _hash_token(token)
+    expires_at = datetime.fromtimestamp(exp_ts, tz=timezone.utc).replace(tzinfo=None)
+    revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    try:
+        existing = db.execute(
+            select(TokenBlacklist.id).where(TokenBlacklist.token_hash == token_hash).limit(1)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return
+
+        db.add(
+            TokenBlacklist(
+                token_hash=token_hash,
+                user_id=user_id,
+                expires_at=expires_at,
+                revoked_at=revoked_at,
+            )
+        )
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise AuthTemporaryError(f"写入令牌黑名单失败: {exc}") from exc
+
+
+def is_token_blacklisted(db: Session, token: str) -> bool:
+    token_hash = _hash_token(token)
+    try:
+        row_id = db.execute(
+            select(TokenBlacklist.id).where(TokenBlacklist.token_hash == token_hash).limit(1)
+        ).scalar_one_or_none()
+        return row_id is not None
+    except SQLAlchemyError as exc:
+        raise AuthTemporaryError(f"查询令牌黑名单失败: {exc}") from exc
+
+
 def decode_access_token(token: str) -> str:
     settings = get_settings()
     try:
@@ -86,7 +148,7 @@ def decode_access_token(token: str) -> str:
     return subject
 
 
-def _extract_bearer_token(authorization: str | None) -> str:
+def extract_bearer_token(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -105,9 +167,23 @@ def _extract_bearer_token(authorization: str | None) -> str:
 
 
 def get_current_user(
+    db: Session = Depends(get_db),
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> CurrentUser:
-    token = _extract_bearer_token(authorization)
+    token = extract_bearer_token(authorization)
+    try:
+        if is_token_blacklisted(db, token):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="token 已失效，请重新登录",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except AuthTemporaryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
     try:
         user_id = decode_access_token(token)
     except ValueError as exc:

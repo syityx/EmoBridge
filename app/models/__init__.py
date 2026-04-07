@@ -1,3 +1,4 @@
 from models.user import User
+from models.token_blacklist import TokenBlacklist
 
-__all__ = ["User"]
+__all__ = ["User", "TokenBlacklist"]
