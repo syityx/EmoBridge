@@ -5,11 +5,13 @@ import uuid
 
 import chromadb
 import fitz  # PyMuPDF
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import MarkdownTextSplitter
 
 from core.config import get_settings
+from schemas.auth import CurrentUser
+from services.auth_service import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -40,14 +42,23 @@ def _pdf_to_markdown(pdf_bytes: bytes) -> str:
     return "\n\n".join(parts)
 
 
+MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
 @router.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)) -> dict:
+async def upload_pdf(
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="请上传 PDF 文件")
 
     pdf_bytes = await file.read()
     if not pdf_bytes:
         raise HTTPException(status_code=400, detail="上传的文件为空")
+
+    if len(pdf_bytes) > MAX_PDF_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="文件过大，最大允许 50 MB")
 
     try:
         markdown_text = _pdf_to_markdown(pdf_bytes)
@@ -98,7 +109,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> dict:
 
 
 @router.get("/chroma-data")
-def get_chroma_data() -> dict:
+def get_chroma_data(current_user: CurrentUser = Depends(get_current_user)) -> dict:
     try:
         collection = _get_chroma_collection()
         result = collection.get(include=["documents", "metadatas"])

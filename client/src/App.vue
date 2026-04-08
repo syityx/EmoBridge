@@ -557,6 +557,7 @@ onBeforeUnmount(() => {
   <div v-else-if="isAdmin" class="admin-shell">
     <AdminPage
       :current-user-name="currentUserName"
+      :auth-token="authToken"
       :on-logout="logout"
     />
   </div>

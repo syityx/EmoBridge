@@ -5,6 +5,7 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
 
 const props = defineProps({
   currentUserName: { type: String, default: '' },
+  authToken: { type: String, default: '' },
   onLogout: { type: Function, default: null },
 })
 
@@ -30,6 +31,9 @@ async function uploadPDF(event) {
   try {
     const response = await fetch(`${API_BASE}/api/v1/admin/upload`, {
       method: 'POST',
+      headers: {
+        Authorization: `Bearer ${props.authToken}`,
+      },
       body: formData,
     })
     const result = await response.json().catch(() => ({}))
@@ -51,7 +55,11 @@ async function fetchChromaData() {
   outputText.value = '正在获取 Chroma 数据，请稍候...'
 
   try {
-    const response = await fetch(`${API_BASE}/api/v1/admin/chroma-data`)
+    const response = await fetch(`${API_BASE}/api/v1/admin/chroma-data`, {
+      headers: {
+        Authorization: `Bearer ${props.authToken}`,
+      },
+    })
     const result = await response.json().catch(() => ({}))
     if (!response.ok) {
       throw new Error(result?.detail || `请求失败（${response.status}）`)
