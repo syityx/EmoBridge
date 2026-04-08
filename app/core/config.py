@@ -43,6 +43,10 @@ class Settings:
     mcp_server_name: str
     mcp_retry_cooldown_seconds: int
     agent_stream_trace_enabled: bool
+    chroma_host: str
+    chroma_port: int
+    chroma_collection_name: str
+    embedding_model_name: str
 
 
 # 只会构造一次并复用同一个对象
@@ -78,4 +82,8 @@ def get_settings() -> Settings:
         mcp_retry_cooldown_seconds=_int_env("MCP_RETRY_COOLDOWN_SECONDS", 15),
         # 是否展示agent执行的每一步细节日志
         agent_stream_trace_enabled=_bool_env("AGENT_STREAM_TRACE_ENABLED", True),
+        chroma_host=os.getenv("CHROMA_HOST", "localhost"),
+        chroma_port=_int_env("CHROMA_PORT", 8000),
+        chroma_collection_name=os.getenv("CHROMA_COLLECTION_NAME", "emobridge_docs"),
+        embedding_model_name=os.getenv("EMBEDDING_MODEL_NAME", "Qwen/Qwen3-Embedding-8B"),
     )
