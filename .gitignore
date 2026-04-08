@@ -5,3 +5,4 @@ app/sessions/
 app/.env
 mcp/src/main/resources/application.yaml
 app/test.py
+app/test/

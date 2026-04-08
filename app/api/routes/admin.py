@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 
 import chromadb
@@ -32,14 +33,28 @@ def _get_embeddings() -> OpenAIEmbeddings:
     )
 
 
-def _pdf_to_markdown(pdf_bytes: bytes) -> str:
+def _pdf_to_markdown(pdf_bytes: bytes) -> list[str]:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     parts: list[str] = []
+    sentences: list[str] = []
     for page_num, page in enumerate(doc, start=1):
-        text = page.get_text()
-        parts.append(f"## Page {page_num}\n\n{text}")
+        text = page.get_text().replace("\n", " ").strip()
+        sentences += [s.replace(" ", "").strip() for s in re.split(r"(?<=[。！？!?])\s*", text) if s.strip()]
+        # if text:
+        #     parts.append(f"## Page {page_num}\n\n{text}")
     doc.close()
-    return "\n\n".join(parts)
+    # return "\n\n".join(parts)
+    return sentences
+
+def _get_window_for_chunk(windows_length: int, chunk_index: int, total_chunks: int) -> str:
+    if total_chunks <= 3:
+        return "full"
+    elif chunk_index == 0:
+        return "start"
+    elif chunk_index == total_chunks - 1:
+        return "end"
+    else:
+        return "middle"
 
 
 MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
@@ -61,14 +76,15 @@ async def upload_pdf(
         raise HTTPException(status_code=413, detail="文件过大，最大允许 50 MB")
 
     try:
+        # markdown_text -> list[str]
         markdown_text = _pdf_to_markdown(pdf_bytes)
     except Exception as exc:
         logger.exception("PDF 转换失败")
         raise HTTPException(status_code=422, detail=f"PDF 解析失败: {exc}") from exc
 
-    splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = splitter.split_text(markdown_text)
-
+    # splitter = MarkdownTextSplitter(chunk_size=600, chunk_overlap=300)
+    # chunks = splitter.split_text(markdown_text)
+    chunks = markdown_text
     if not chunks:
         raise HTTPException(status_code=422, detail="PDF 内容为空，无法切片")
 
@@ -82,11 +98,18 @@ async def upload_pdf(
     batch_id = uuid.uuid4().hex[:8]
     filename_stem = file.filename.rsplit(".", 1)[0]
     ids = [f"{filename_stem}_{batch_id}_{i}" for i in range(len(chunks))]
+    n = 3  # 定义窗口大小
     metadatas = [
-        {"source": file.filename, "chunk_index": i, "batch_id": batch_id}
+        {
+            "source": file.filename, 
+            "chunk_index": i, 
+            "batch_id": batch_id,
+            # "window": _get_window_for_chunk(3, i, len(chunks))
+            "window": "。".join(chunks[max(0, i-n):min(len(chunks), i+n)])
+        }
         for i in range(len(chunks))
     ]
-
+    logger.error(f"chunks:{chunks}")
     try:
         collection = _get_chroma_collection()
         collection.add(
