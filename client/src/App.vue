@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import AdminPage from './components/AdminPage.vue'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
 const SYSTEM_NAME = 'EmoBridge智能助手'
@@ -42,6 +43,7 @@ const messages = ref([
 
 const canSend = computed(() => !isStreaming.value && inputText.value.trim().length > 0)
 const isLoggedIn = computed(() => !!authToken.value && !!currentUserId.value)
+const isAdmin = computed(() => isLoggedIn.value && currentUserName.value === 'admin')
 
 function isAssistantPending(item) {
   return item.role === 'assistant' && isStreaming.value && !item.text.trim()
@@ -550,6 +552,13 @@ onBeforeUnmount(() => {
         </button>
       </div>
     </section>
+  </div>
+
+  <div v-else-if="isAdmin" class="admin-shell">
+    <AdminPage
+      :current-user-name="currentUserName"
+      :on-logout="logout"
+    />
   </div>
 
   <div v-else class="chat-page">
