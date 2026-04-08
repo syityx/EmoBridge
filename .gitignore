@@ -6,3 +6,4 @@ app/.env
 mcp/src/main/resources/application.yaml
 app/test.py
 app/test/
+.github/skills/git-commit-push-zh/SKILL.md

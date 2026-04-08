@@ -12,6 +12,7 @@ const props = defineProps({
 const outputText = ref('')
 const isUploading = ref(false)
 const isFetching = ref(false)
+const isClearing = ref(false)
 const fileInputRef = ref(null)
 
 function triggerFileInput() {
@@ -71,6 +72,32 @@ async function fetchChromaData() {
     isFetching.value = false
   }
 }
+
+async function clearChromaData() {
+  const confirmed = window.confirm('确定要清空整个知识库吗？此操作不可恢复。')
+  if (!confirmed) return
+
+  isClearing.value = true
+  outputText.value = '正在清空知识库，请稍候...'
+
+  try {
+    const response = await fetch(`${API_BASE}/api/v1/admin/chroma-data`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${props.authToken}`,
+      },
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(result?.detail || `请求失败（${response.status}）`)
+    }
+    outputText.value = JSON.stringify(result, null, 2)
+  } catch (error) {
+    outputText.value = `错误：${error?.message || '清空失败'}`
+  } finally {
+    isClearing.value = false
+  }
+}
 </script>
 
 <template>
@@ -103,10 +130,18 @@ async function fetchChromaData() {
         <button
           class="ghost"
           type="button"
-          :disabled="isUploading || isFetching"
+          :disabled="isUploading || isFetching || isClearing"
           @click="fetchChromaData"
         >
           {{ isFetching ? '查询中...' : '查看 Chroma 数据' }}
+        </button>
+        <button
+          class="danger"
+          type="button"
+          :disabled="isUploading || isFetching || isClearing"
+          @click="clearChromaData"
+        >
+          {{ isClearing ? '清空中...' : '清空知识库' }}
         </button>
       </div>
 
@@ -202,6 +237,21 @@ button.ghost {
 }
 
 button.ghost:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button.danger {
+  padding: 8px 20px;
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+button.danger:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

@@ -147,3 +147,21 @@ def get_chroma_data(current_user: CurrentUser = Depends(get_current_user)) -> di
         "documents": result.get("documents") or [],
         "metadatas": result.get("metadatas") or [],
     }
+
+
+@router.delete("/chroma-data")
+def clear_chroma_data(current_user: CurrentUser = Depends(get_current_user)) -> dict:
+    try:
+        collection = _get_chroma_collection()
+        result = collection.get()
+        ids = result.get("ids") or []
+        if ids:
+            collection.delete(ids=ids)
+    except Exception as exc:
+        logger.exception("Chroma 清空失败")
+        raise HTTPException(status_code=502, detail=f"Chroma 清空失败: {exc}") from exc
+
+    return {
+        "success": True,
+        "deleted_count": len(ids),
+    }
