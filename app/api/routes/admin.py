@@ -13,15 +13,19 @@ from langchain_text_splitters import MarkdownTextSplitter
 from core.config import get_settings
 from schemas.auth import CurrentUser
 from services.auth_service import get_current_user
+from langgraph.store.memory import InMemoryStore
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
+store = InMemoryStore()
 
-def _get_chroma_collection() -> chromadb.Collection:
+
+def _get_chroma_collection(collection_name: str) -> chromadb.Collection:
     settings = get_settings()
     client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-    return client.get_or_create_collection(settings.chroma_collection_name)
+    collection_name = collection_name or settings.chroma_collection_name
+    return client.get_or_create_collection(collection_name)
 
 
 def _get_embeddings() -> OpenAIEmbeddings:
@@ -103,7 +107,7 @@ async def upload_pdf(
     ]
     logger.error(f"chunks:{chunks}")
     try:
-        collection = _get_chroma_collection()
+        collection = _get_chroma_collection(None)
         collection.add(
             ids=ids,
             documents=chunks,
@@ -126,7 +130,7 @@ async def upload_pdf(
 @router.get("/chroma-data")
 def get_chroma_data(current_user: CurrentUser = Depends(get_current_user)) -> dict:
     try:
-        collection = _get_chroma_collection()
+        collection = _get_chroma_collection(None)
         result = collection.get(include=["documents", "metadatas"])
     except Exception as exc:
         logger.exception("Chroma 查询失败")
@@ -144,7 +148,7 @@ def get_chroma_data(current_user: CurrentUser = Depends(get_current_user)) -> di
 @router.delete("/chroma-data")
 def clear_chroma_data(current_user: CurrentUser = Depends(get_current_user)) -> dict:
     try:
-        collection = _get_chroma_collection()
+        collection = _get_chroma_collection(None)
         result = collection.get()
         ids = result.get("ids") or []
         if ids:
