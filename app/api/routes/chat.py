@@ -23,7 +23,7 @@ def health_check() -> dict[str, str]:
 
 
 @router.get("/api/v1/sessions/{session_id}/messages", response_model=SessionMessagesResponse)
-def get_session_messages(
+async def get_session_messages(
     session_id: str,
     current_user: CurrentUser = Depends(get_current_user),
 ) -> SessionMessagesResponse:
@@ -33,7 +33,7 @@ def get_session_messages(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     thread_id = build_thread_id(current_user.user_id, session_id)
-    messages = get_thread_messages(thread_id)
+    messages = await get_thread_messages(settings, thread_id)
     return SessionMessagesResponse(session_id=session_id, messages=messages)
 
 

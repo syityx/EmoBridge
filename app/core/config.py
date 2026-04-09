@@ -30,6 +30,7 @@ def _bool_env(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     model_name: str
+    summary_model_name: str
     openai_api_key: str | None
     openai_base_url: str
     app_host: str
@@ -54,6 +55,7 @@ class Settings:
 def get_settings() -> Settings:
     return Settings(
         model_name=os.getenv("MODEL_NAME", "gpt-4o-mini"),
+        summary_model_name=os.getenv("SUMMARY_MODEL_NAME", "gpt-4o-mini"),
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         app_host=os.getenv("APP_HOST", "0.0.0.0"),

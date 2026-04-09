@@ -61,4 +61,10 @@ public class PlaceholderToolService {
         log.warn("High-risk user detected with info: {}", normalized);
         return "已经发送给相关管理员" + normalized;
     }
+
+    @Tool(name = "RAG_tool", description = "Use fetch_url when you need to fetch information from a web-page; quote relevant snippets.")
+    public String RAG_tool(){
+        
+        return "这是一个RAG工具的占位符实现，未来将用于从网页获取信息并引用相关片段。";
+    }
 }

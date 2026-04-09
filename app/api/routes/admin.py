@@ -46,16 +46,6 @@ def _pdf_to_markdown(pdf_bytes: bytes) -> list[str]:
     # return "\n\n".join(parts)
     return sentences
 
-def _get_window_for_chunk(windows_length: int, chunk_index: int, total_chunks: int) -> str:
-    if total_chunks <= 3:
-        return "full"
-    elif chunk_index == 0:
-        return "start"
-    elif chunk_index == total_chunks - 1:
-        return "end"
-    else:
-        return "middle"
-
 
 MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
@@ -104,8 +94,10 @@ async def upload_pdf(
             "source": file.filename, 
             "chunk_index": i, 
             "batch_id": batch_id,
-            # "window": _get_window_for_chunk(3, i, len(chunks))
-            "window": "。".join(chunks[max(0, i-n):min(len(chunks), i+n)])
+            # 窗口大小定为n
+            "window": "。".join(chunks[max(0, i-n):min(len(chunks), i+n)]),
+            # 使用余弦距离，默认L2距离在高维空间中效果较差，余弦距离更适合文本数据的相似度计算
+            "hnsw:space": "cosine",
         }
         for i in range(len(chunks))
     ]
