@@ -44,6 +44,16 @@
 			<groupId>org.springframework.ai</groupId>
 			<artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
 		</dependency>
+		<!-- Chroma 向量数据库 Spring AI 集成（用于 RAG 检索） -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-starter-vector-store-chroma</artifactId>
+		</dependency>
+		<!-- OpenAI 兼容嵌入模型（用于向量化查询词，支持 SiliconFlow / 私有部署） -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-starter-model-openai</artifactId>
+		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
